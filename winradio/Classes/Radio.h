@@ -8,7 +8,9 @@
 
 #import <Foundation/Foundation.h>
 #import "DeviceProtocol.h"
+
 NS_ASSUME_NONNULL_BEGIN
+
 
 typedef enum
 	{
@@ -18,11 +20,18 @@ typedef enum
 	ENABLE_POWER			= 0x08,
 	GET_POWER				= 0x0A,
 	GET_RADIO_READY			= 0x0D,
+    GET_MCU_VERSION         = 0x0E,
+    GET_SIGNAL_STRENGTH     = 0x42,
+    GET_RCVR_VERSION        = 0x47,
 	UNMUTE_RADIO			= 0x50,
 	MUTE_RADIO				= 0x51,
 	ENABLE_ATTENUATION		= 0x56,
 	DISABLE_ATTENUATION		= 0x57,
-	GET_VOLUME				= 0x89
+    CLEAR_SET_PLL           = 0x59,
+    CLEAR_SET_FBO           = 0x70,
+    CONFIG_SET_PLL          = 0x7B,
+	GET_VOLUME				= 0x89,
+    SET_BAUDRATE            = 0xAE
 	} RadioCommand;
 
 typedef enum

@@ -38,6 +38,7 @@
 		F40D519F263B4F3600060577 /* SettingsFactory.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SettingsFactory.h; sourceTree = "<group>"; };
 		F40D51A0263B4F3600060577 /* SettingsFactory.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SettingsFactory.m; sourceTree = "<group>"; };
 		F40D51A2263B548100060577 /* DeviceProtocol.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = DeviceProtocol.h; sourceTree = "<group>"; };
+		F4E18D3B263BBA7400E4333B /* defines.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = defines.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -88,6 +89,7 @@
 				F40D519D263B4EF000060577 /* Settings.m */,
 				F40D519F263B4F3600060577 /* SettingsFactory.h */,
 				F40D51A0263B4F3600060577 /* SettingsFactory.m */,
+				F4E18D3B263BBA7400E4333B /* defines.h */,
 			);
 			path = Classes;
 			sourceTree = "<group>";

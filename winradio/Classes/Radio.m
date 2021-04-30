@@ -11,6 +11,9 @@
 #import "SettingsFactory.h"
 #import "SerialDevice.h"
 
+#import <sys/ttycom.h>
+
+#import "defines.h"
 
 #define RFQ_X10		0x80000000L		// frequency x10 multiplier, ie. 2-20 GHz
 
@@ -403,7 +406,9 @@ static const struct
 	BOOL oMute = _settings.curMuted;
 	_settings.radioInfo->hwVer = RHV_1000b;
 	
-    /* Prevents SetPower() from programming the pll */
+	/*************************************************************************\
+	|* Prevents SetPower() from programming the PLL
+	\*************************************************************************/
 	[self setPower:YES];
 	[self _delay:300];
 
@@ -422,70 +427,80 @@ static const struct
 	}
 
 
+/*****************************************************************************\
+|* Speed up comms
+\*****************************************************************************/
+- (void) _setBaudRate
+    {
+    #ifdef WRSERIAL_115200 /* PB 115200 supported on all models ? */
+        [self _write:SET_BAUDRATE];
+        [self _write:1];
+        SetBaudRate(hRadio, 115200);
+    #endif
+    #ifdef WRSERIAL_38400
+        [self _write:SET_BAUDRATE];
+        [self _write:3];
+		SetBaudRate(hRadio, 38400);
+    #endif
+    }
+
+/*****************************************************************************\
+|* Reset the device
+\*****************************************************************************/
 - (BOOL) _performReset
 	{
-	TRACE(("Reset\n"));
+	TRACE("Reset\n");
 
-	if (RadioSettings[hRadio]->riInfo.iHWInterface == RHI_SERIAL)
-	{
-	  BYTE a, b;
-		/*  initiates comms with serial devices (no mods required) */
+    if (_settings.radioInfo->hwInterface == RHI_SERIAL)
+        {
+        /*********************************************************************\
+        |* initiates comms with serial devices (no mods required)
+        \*********************************************************************/
+        [self _write:0];
+        [self _write:0];
+        [self _write:0];
+        [self _write:0];
 
-		WriteMcuByte(hRadio, 0);	/*  sychronise comms */
-		WriteMcuByte(hRadio, 0);
-		WriteMcuByte(hRadio, 0);
-		WriteMcuByte(hRadio, 0);
-		/*  increase baud rate */
-#ifdef WRSERIAL_115200 /* PB 115200 supported on all models ? */
-		WriteMcuByte(hRadio, 0xae);
-		WriteMcuByte(hRadio, 1);
-		SetBaudRate(hRadio, 115200l);
-#endif
-#ifdef WRSERIAL_38400
-		WriteMcuByte(hRadio, 0xae);
-		WriteMcuByte(hRadio, 3);
-		SetBaudRate(hRadio, 38400l);
-#endif
-		/*  establish existance of WiNRADiO */
-		if (!(WriteMcuByte(hRadio, 0x0d) && ReadMcuByte(hRadio, &a) &&
-			ReadMcuByte(hRadio, &b) && (a == 0x55) && (b == 0xaa)))
+        /*********************************************************************\
+        |* increase baud rate
+        \*********************************************************************/
+        [self _setBaudRate];
+        
+        /*********************************************************************\
+        |* establish existance of WiNRADiO
+        \*********************************************************************/
+		if (![self _detectRadio])
 			{
-				Delay(200);
-				WriteMcuByte(hRadio, 0);
-				WriteMcuByte(hRadio, 0);
-				WriteMcuByte(hRadio, 0);
-				WriteMcuByte(hRadio, 0);
-				
-				if (!(WriteMcuByte(hRadio, 0x0d) && ReadMcuByte(hRadio, &a) &&
-							ReadMcuByte(hRadio, &b) && (a == 0x55) && (b == 0xaa))) {
-					return FALSE;
-				}
+			[self _delay:200];
+
+            [self _write:0];
+            [self _write:0];
+            [self _write:0];
+            [self _write:0];
+    
+            if (![self _detectRadio])
+                return NO;
 			}
-		return TRUE;
-	}
-	else /* ISA */
-	{
-	  BYTE a;
-		/*  reset the ISA WiNRADiO device (may require modification or removal) */
+		return YES;
+        }
+        
+    return NO;
+    }
 
-		inb(RadioSettings[hRadio]->wIoAddr);	/*  clear outut buffer */
-		inb(RadioSettings[hRadio]->wIoAddr);
-
-		outb(1, RadioSettings[hRadio]->wIoAddr + 1);	/*  activate reset line */
-
-		Delay(100);
-
-		outb(0, RadioSettings[hRadio]->wIoAddr + 1);	/*  unreset MCU */
-
-		Delay(100);
-
-		if (ReadMcuByte(hRadio, &a) && (a == 0x55))
-			return TRUE;
-		return (ReadMcuByte(hRadio, &a) && (a == 0x55));
-	}
-}
-
-
+     
+/*****************************************************************************\
+|* Detect presence
+\*****************************************************************************/
+- (BOOL) _detectRadio
+    {
+    uint8_t a, b;
+ 
+    [self _write:GET_RADIO_READY];
+    [self _read:&a];
+    [self _read:&b];
+    return (a==0x55) && (b==0xaa);
+    }
+    
 /*****************************************************************************\
 |* Write a byte to the radio
 \*****************************************************************************/
@@ -502,6 +517,23 @@ static const struct
 	*byte = 0xFF;
 	return [_device read:1 into:byte];
 	}
+
+/*****************************************************************************\
+|* Write a buffer then read a buffer
+\*****************************************************************************/
+- (BOOL) _xferOutNum:(int)outNum outBuf:(uint8_t *)outBuf
+               inNum:(int)inNum  inBuf:(uint8_t *)inBuf
+    {
+    while (outNum --)
+        if (![self _write:*outBuf++])
+            return NO;
+    
+    while (inNum --)
+        if (![self _read:inBuf++])
+            return NO;
+    
+    return YES;
+    }
 
 /*****************************************************************************\
 |* Read whether we're powered up. Not useful for serial devices
@@ -628,163 +660,286 @@ static const struct
 	}
 
 /*****************************************************************************\
+|* Set the BFO PLL
+\*****************************************************************************/
+- (BOOL) setBfoPllC:(uint8_t)c
+                  R:(uint32_t)R
+                  N:(uint32_t)N
+             setPll:(uint8_t)setPll
+             clrPll:(uint8_t)clrPll
+    {
+	BOOL isUS   = _settings.radioInfo->features & RIF_USVERSION;
+	int bufidx = 0;
+	
+    uint8_t buf[16];
+
+	/*************************************************************************\
+	|* set PLL C register
+	\*************************************************************************/
+	if (isUS)
+		buf[bufidx++] = 0x78;
+	else
+        {
+		buf[bufidx++] = setPll;
+		buf[bufidx++] = 0x6d;
+        }
+
+	buf[bufidx++] = c;
+
+	/*************************************************************************\
+	|* set PLL R register
+	\*************************************************************************/
+	if (isUS)
+		buf[bufidx++] = 0x79;
+	else
+        {
+		buf[bufidx++] = clrPll;
+		buf[bufidx++] = setPll;
+		buf[bufidx++] = 0x6e;
+        }
+
+	buf[bufidx++] = R & 0xff;
+	buf[bufidx++] = R >> 8;
+
+	/*************************************************************************\
+	|* set PLL A register
+	\*************************************************************************/
+	if (isUS)
+		buf[bufidx++] = 0x7a;
+	else
+        {
+		buf[bufidx++] = clrPll;
+		buf[bufidx++] = setPll;
+		buf[bufidx++] = 0x6f;
+        }
+
+	buf[bufidx++] = N & 0xff;
+	buf[bufidx++] = (N >> 8) & 0xff;
+	buf[bufidx++] = N >> 16;
+
+	if (!isUS)
+		buf[bufidx++] = clrPll;
+
+    return [self _xferOutNum:bufidx outBuf:buf inNum:0 inBuf:NULL];
+    }
+
+/*****************************************************************************\
 |* Set the digital BFO on a 1500/1550
 \*****************************************************************************/
 - (BOOL) _setBfo1500:(int)bfo
-{
-	LPRADIOSETTINGS rs = RadioSettings[hRadio];
-	double Cv, Ct, f;
-	DWORD d, N, bN=0;
-	UINT R, A, bR=0;
+    {
+	uint32_t bN=0, bR=0;
 
-	/*  calculate BFO's PLL parameters */
-
-	f = 32.0 * (4.55e5 + iBfo);
-	Cv = 2e9;
-	for (R = rs->dwRefFreq / 5000; R >= rs->dwRefFreq / 10000; R--)
-	{
-		d = (DWORD)(f * R / rs->dwRefFreq + 0.5);
-		N = d >> 6;
-		A = d & 63;
-		if (N > A)
-		{
-			Ct = abs((double)rs->dwRefFreq * d / R - f);
+	/*************************************************************************\
+	|* calculate BFO's PLL parameters
+	\*************************************************************************/
+	double f    = 32.0 * (4.55e5 + bfo);
+	double Cv   = 2e9;
+    int refFreq = _settings.refFreq;
+    
+	for (uint32_t R = refFreq/5000; R >= refFreq/10000; R--)
+        {
+		uint32_t d  = (uint32_t)(f * R / refFreq + 0.5);
+		uint32_t N  = d >> 6;
+		uint32_t A  = d & 63;
+		
+        if (N > A)
+            {
+			double Ct = fabs((double)refFreq * d / R - f);
 			if (Ct < Cv)
-			{
+                {
 				Cv = Ct;
 				bN = d;
 				bR = R;
 				if (Cv < 0.5)
 					break;
-			}
+                }
+            }
+        }
+
+	/*************************************************************************\
+	|* And set them
+	\*************************************************************************/
+    int mode    = _settings.curMode;
+    int cwSSB   = (mode == RMD_CW) || (mode == RMD_LSB) || (mode == RMD_USB);
+    return [self setBfoPllC:(cwSSB) ? 0x40 : 0x42
+                          R:bR | 0x4000
+                          N:0x300000L + (bN & 63) + ((bN >> 6) << 8)
+                     setPll:0x71
+                     clrPll:0x70];
+    }
+
+/*****************************************************************************\
+|* Figure out the MCU version
+\*****************************************************************************/
+- (void) _getMcuVersion
+    {
+	char * vs[80];
+	int i = 0;
+
+ 	/*************************************************************************\
+	|* Read the version string
+	\*************************************************************************/
+   [self _write:GET_MCU_VERSION];
+	do
+        [self _read:(uint8_t *)(&vs[i++])];
+	while (vs[i-1] && (i <= 75));
+	vs[i] = 0;
+
+ 	/*************************************************************************\
+	|* Look for identifiers
+	\*************************************************************************/
+	if (strstr((const char *)vs, "Vers 2.0.1,")
+     || strstr((const char *)vs, "25M-XTAL"))
+        _settings.refFreq = 25600000L;
+
+	if (strstr((char *)vs, "FCC"))
+        _settings.radioInfo->features |= RIF_USVERSION;
+    }
+
+/*****************************************************************************\
+|* Identify which radio is attached
+\*****************************************************************************/
+- (void) _identifyRadio
+    {
+    RadioInfo *ri = _settings.radioInfo;
+
+ 	/*************************************************************************\
+	|* get MCU version (states US version and 25M xtal)
+	\*************************************************************************/
+    [self _getMcuVersion];
+
+ 	/*************************************************************************\
+	|* get receiver version
+	\*************************************************************************/
+	uint8_t rv;
+    [self _write:GET_RCVR_VERSION];
+    [self _read:&rv];
+    
+	if ((rv > 237) || (rv < 10))
+        {
+		static uint8_t cmds[] = {0x56, 0x60, 0x6d, 0x2c, 0x6e, 0x00, 0x24, 0x6f,
+                                 0x1a, 0x77, 0x72, 0x5b, 0x67};
+
+        /*********************************************************************\
+        |* set frequency, mode and attenuator
+        \*********************************************************************/
+        [self _xferOutNum:sizeof(cmds) outBuf:cmds inNum:0 inBuf:NULL];
+
+		[self _delay:100];
+        [self _write:GET_SIGNAL_STRENGTH];
+        [self _read:&rv];
+
+		if (rv < 182)
+			ri->hwVer = RHV_1000b;		/*  1st generation 1000b */
+
+        /*********************************************************************\
+        |* restore settings
+        \*********************************************************************/
+        [self setMode:_settings.curMode];
+        [self setFrequency:_settings.freq];
+        [self setAttenuation:_settings.curAttenuation];
+        }
+        
+	else if (rv > 190)
+		ri->hwVer = RHV_1000b;
+	
+    else if (rv > 121)
+		ri->hwVer = RHV_1500;
+        
+	else if (rv > 99)
+		ri->hwVer = RHV_3000;
+        
+	else if (rv > 52)
+		ri->hwVer = RHV_3100;
+        
+	else
+		ri->hwVer = RHV_1550;
+
+
+	if (ri->hwVer <= 0x10a)
+		strcpy(ri->descr, "WR-1000");
+	else
+		{
+        if ((ri->hwVer >= 0x200) && (ri->hwVer < 0x300))
+            ri->hwVer += 0x100;
+        else if ((ri->hwVer >= 0x300) && (ri->hwVer < 0x400))
+            ri->hwVer -= 0x100;
+        
+        sprintf(ri->descr, "WR-%d%.2d0", ri->hwVer >> 8, ri->hwVer & 0xff);
 		}
-	}
-
-	return SetBfoPll(hRadio,
-		((rs->iCurMode == RMD_CW) || (rs->iCurMode == RMD_LSB) || (rs->iCurMode == RMD_USB)) ? 0x40 : 0x42,
-		bR | 0x4000, 0x300000L + (bN & 63) + ((bN >> 6) << 8), 0x71, 0x70);
-}
-
+	if (ri->hwInterface)
+		strcat(ri->descr, "e");
+	else
+		strcat(ri->descr, "i");
+	
+	if (ri->features & RIF_USVERSION)
+		strcat(ri->descr, " (US version)");
+    }
+    
 /*****************************************************************************\
 |* Hardware-dependent settings.
 \*****************************************************************************/
 - (void) _initialiseRadioByHardware:(BOOL)fullInit
 	{
-	LPRADIOSETTINGS rs = RadioSettings[hRadio];
-	LPRADIOINFO ri = &rs->riInfo;
-
 	static int ModeList[] = {0, 1, 2, 3, 4, 5, 6, 7};
+    RadioInfo *ri = _settings.radioInfo;
 
-	/*  initialize RadioSettings to defaults (1000b) */
-	rs->lpSetFreqProc = SetFreq1000;
-	rs->lpSetModeProc = SetMode1000;
-	rs->lpSetBfoProc = SetBfo1000;
-	rs->lpSetAgcProc = SetAgc1000;
-	rs->lpSetIfGainProc = SetIfGain1000;
-	rs->lpGetSLevelProc = GetSLevel1000b;
+	/*************************************************************************\
+	|* initialize RadioSettings to defaults (1000b)
+	\*************************************************************************/
+	_settings.ifxOverFreq = 513e6;
 
-	rs->ftIfXOverFreq = 513e6;
+	ri->size            = sizeof(RadioInfo);
+	ri->features        = 0;
+	ri->apiVer          = 0x232;	    //  version 2.50
+	if (fullInit)
+		ri->hwVer       = RHV_1000b;	//  for starters
+	ri->minFreq         = 500000L;
+	ri->maxFreq         = 1300000000L;
+	ri->freqRes         = 100;
+	ri->numModes        = 4;
+	ri->maxVolume       = 31;
+	ri->maxBFO          = 3000;
+	ri->maxFMScanRate   = 50;
+	ri->maxAMScanRate   = 10;
+	ri->numSources      = 1;
+	ri->deviceNum       = 0;
+	ri->maxIFShift      = 0;
+	ri->dspSources      = 0;
+	ri->waveFormats     = 0;
+	ri->maxFreqkHz      = 1300000;
+	ri->supportedModes  = (ModeTypes) &ModeList;
 
-	/*  initialize RadioInfo to defaults (1000b) */
-	ri->dwSize = sizeof(RADIOINFO);
-	ri->dwFeatures = 0;
-	ri->wAPIVer = 0x232;	/*  version 2.50 */
-	if (fFullInit)
-		ri->wHWVer = RHV_1000b;	/*  for starters */
-	ri->dwMinFreq = 500000L;
-	ri->dwMaxFreq = 1300000000L;
-	ri->iFreqRes = 100;
-	ri->iNumModes = 4;
-	ri->iMaxVolume = 31;
-	ri->iMaxBFO = 3000;
-	ri->iMaxFMScanRate = 50;
-	ri->iMaxAMScanRate = 10;
-	ri->iNumSources = 1;
-	ri->iDeviceNum = hRadio;
-	ri->iMaxIFShift = 0;
-	ri->iDSPSources = 0;
-	ri->dwWaveFormats = 0;
-	ri->dwMaxFreqkHz = 1300000;
-	ri->lpSupportedModes = (LPMODELIST)&ModeList;
+	if (fullInit)
+        [self _identifyRadio];
 
-	if (fFullInit)
-		IdentifyRadio(hRadio);
+	if (ri->hwVer >= RHV_1500)
+        {
+		ri->minFreq     = 150000L;
+		ri->maxFreq     = 1500000000L;
+		ri->maxFreqkHz  = 1500000L;
+		ri->freqRes     = 1;
+		ri->numModes    = 6;
+		ri->maxBFO      = 0;
+		ri->maxIFShift  = 3000;
+		ri->features   |= RIF_LSBUSB | RIF_CWIFSHIFT;
 
-	if ((ri->wHWVer >= RHV_3000) && (ri->wHWVer < RHV_2000))
-	{
-		/*  a Spectrum Monitor receiver (3000, 3100, 3150, 3500, 3700) */
-		ri->dwMinFreq = 150000L;
-		ri->dwMaxFreq = 1500000000L;
-		ri->dwMaxFreqkHz = 1500000L;
-		ri->iFreqRes = 1;
-		ri->iNumModes = 6;
-		ri->dwFeatures |= RIF_LSBUSB;
-		rs->lpGetSLevelProc = GetSLevel3000;
+		if (ri->hwVer == RHV_1500)
+            {
+            [self _write:CLEAR_SET_FBO];
+            [self _write:CLEAR_SET_PLL];
+            
+			if (ri->features & RIF_USVERSION)
+                {
+                [self _write:CONFIG_SET_PLL];
+                [self _write:0x00];
+                }
+            }
+        }
 
-		if (ri->wHWVer == RHV_3000)
-		{
-			ri->iMaxBFO = 2000;
-			ri->iMaxIFShift = 2000;
-		}
-		else
-		if (ri->wHWVer == RHV_3100)
-		{
-			ri->dwFeatures |= RIF_CWIFSHIFT;
-			WriteMcuByte(hRadio, 0x70);		/*  clear -SETBFO line */
-			WriteMcuByte(hRadio, 0x59);		/*  clear -SETPLL line */
-			if (ri->dwFeatures & RIF_USVERSION)
-			{
-				WriteMcuByte(hRadio, 0x7b);
-				WriteMcuByte(hRadio, 0x00);	/*  -SETPLL uses latch 0, bit 0 */
-			}
-			ri->iMaxBFO = 0;
-			ri->iMaxIFShift = 3000;
-			rs->lpSetBfoProc = SetBfo1500;
-		}
-		else
-		{
-			if (ri->wHWVer == RHV_3500)
-			{
-				ri->dwMaxFreq = 2100000000L;
-				ri->dwMaxFreqkHz = 2600000L;
-			} else
-			if (ri->wHWVer == RHV_3700)
-			{
-				ri->dwMaxFreq = 2100000000L;
-				ri->dwMaxFreqkHz = 4000000L;
-			} else
-			{
-				ri->dwMaxFreq = 1600000000L;
-				ri->dwMaxFreqkHz = 1600000L;
-			}
-		}
-	} else
-	if (ri->wHWVer >= RHV_1500)
-	{
-		ri->dwMinFreq = 150000L;
-		ri->dwMaxFreq = 1500000000L;
-		ri->dwMaxFreqkHz = 1500000L;
-		ri->iFreqRes = 1;
-		ri->iNumModes = 6;
-		ri->iMaxBFO = 0;
-		ri->iMaxIFShift = 3000;
-		ri->dwFeatures |= RIF_LSBUSB | RIF_CWIFSHIFT;
-
-		if (ri->wHWVer == RHV_1500)
-		{
-			WriteMcuByte(hRadio, 0x70);		/*  clear -SETBFO line */
-			WriteMcuByte(hRadio, 0x59);		/*  clear -SETPLL line */
-			if (ri->dwFeatures & RIF_USVERSION)
-			{
-				WriteMcuByte(hRadio, 0x7b);
-				WriteMcuByte(hRadio, 0x00);	/*  -SETPLL uses latch 0, bit 0 */
-			}
-			rs->lpSetBfoProc = SetBfo1500;
-		}
-	}
-
-	if (((ri->wHWVer > RHV_1500) && (ri->wHWVer < RHV_3000)) || (ri->wHWVer > RHV_3100))
-	{
+	if (((ri->hwVer > RHV_1500) && (ri->hwVer < RHV_3000)) || (ri->hwVer > RHV_3100))
+        {
 		/*  2000 series based receivers, set appropriate properties */
 		rs->lpSetFreqProc = SetFreq2000;
 		rs->lpSetModeProc = SetMode2000;

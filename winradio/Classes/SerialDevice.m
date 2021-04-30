@@ -88,6 +88,19 @@
 	{
 	struct termios options = _current;
 	
+    switch (baudrate)
+        {
+        case 115200:
+            baudrate    = B115200;
+            break;
+        case 38400:
+            baudrate    = B38400;
+            break;
+        case 9600:
+            baudrate    = B9600;
+            break;
+        }
+ 
 	cfsetspeed(&_current, baudrate);
 	if ([self _commit])
 		return YES;
