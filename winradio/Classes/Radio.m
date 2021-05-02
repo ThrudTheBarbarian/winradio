@@ -12,6 +12,7 @@
 #import "SerialDevice.h"
 
 #import <sys/ttycom.h>
+#include <sys/time.h>
 
 #import "defines.h"
 
@@ -937,7 +938,7 @@ static const struct
                 }
             }
         }
-
+#ifdef NEED_WORK
 	if (((ri->hwVer > RHV_1500) && (ri->hwVer < RHV_3000)) || (ri->hwVer > RHV_3100))
         {
 		/*  2000 series based receivers, set appropriate properties */
@@ -986,10 +987,12 @@ static const struct
 
 	if (ri->wHWVer == RHV_1000a)
 		rs->lpGetSLevelProc = GetSLevel1000a;
-	}
+#endif
+    }
 
 - (BOOL) _setFreq1000:(double)freq actualFreq:(double *)actfreq
 	{
+#ifdef NEED_WORK
 	static const double VcoOffsets[5] = {556.325e6, 249.125e6, 58.075e6, -249.125e6, -556.325e6};
 	static const double FreqRanges[9] = {1.8e6, 30e6, 50e6, 118e6, 300e6, 513e6, 798e6, 1106e6, 21e9};
 	static const double SmFilters[8] = {0.5e6, 0.95e6, 1.8e6, 3.5e6, 7.0e6, 14e6, 30e6, 118e6};
@@ -1154,11 +1157,13 @@ static const struct
 	if (actfreq)
 		*actfreq = fvco;
 
+#endif
 	return TRUE;
 }
 
 - (BOOL) _setMode1000:(int)mode
 {
+#ifdef NEED_WORK
 	LPRADIOSETTINGS rs = RadioSettings[hRadio];
 
 	if (!WriteMcuByte(hRadio, Modes[iMode]))
@@ -1187,6 +1192,7 @@ static const struct
 
 	rs->iCurMode = iMode;
 
+#endif
 	return TRUE;
 }
 
